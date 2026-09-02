@@ -9,6 +9,16 @@ from config import CHUNK_SIZE, CHUNK_OVERLAP
 encoder = tiktoken.get_encoding("cl100k_base")
 
 
+def make_uid(source: str, chunk_id: int) -> str:
+    """Build a stable, globally-unique chunk identifier.
+
+    `chunk_id` in `chunk_documents` is per-document, so it is combined with the
+    document `source` path to remain unique across the whole corpus. This uid is
+    the key used for RRF deduplication and FTS rows.
+    """
+    return f"{source}::{chunk_id}"
+
+
 def chunk_text(text: str):
     """Split text into chunks with overlap."""
     tokens = encoder.encode(text)
@@ -32,7 +42,8 @@ def chunk_documents(documents):
             all_chunks.append({
                 "text": chunk,
                 "source": doc["path"],
-                "chunk_id": idx
+                "chunk_id": idx,
+                "uid": make_uid(doc["path"], idx),
             })
 
     return all_chunks

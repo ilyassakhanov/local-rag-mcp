@@ -51,8 +51,9 @@ Edit `config.py` if needed:
 - Set `DOCUMENTS_DIR` to your documents path (default: `./docs`)
 - Change `OLLAMA_MODEL` if using a different model
 - Adjust `CHUNK_SIZE`, `CHUNK_OVERLAP`, or `TOP_K` as needed
+- Hybrid search settings: `HYBRID_TOP_K`, `RRF_K` (default 60), `EXPANSION_NUM_QUERIES`, `EXPANSION_TEMPERATURE` (0.0), `EXPANSION_TIMEOUT`
 
-### 7. Build the FAISS index (Optional)
+### 7. Build the FAISS + FTS index (Optional)
 
 The index will be built automatically on first use. To manually build it:
 
@@ -67,10 +68,13 @@ python -m rag.build_index
 
 This will:
 - Load all documents from the `docs/` directory
-- Chunk them into smaller pieces
+- Chunk them into smaller pieces (each chunk gets a stable `uid`)
 - Generate embeddings
-- Build the FAISS index
-- Save `index.faiss` and `chunks.pkl`
+- Build the FAISS index (`index.faiss`)
+- Save the chunks pickle (`chunks.pkl`)
+- Build the SQLite FTS5 full-text index (`chunks.sqlite`)
+
+All three artifacts are rebuilt together from the same ingested corpus; FTS reuses the existing chunks (no duplicate embedding work).
 
 ## Usage
 
@@ -93,10 +97,24 @@ Type `exit` or `quit` to stop.
 When you add new documents or update existing ones:
 
 1. Add/update files in the `docs/` directory
-2. Rebuild the index:
+2. Rebuild the index (rebuilds FAISS + chunks + FTS together):
    ```bash
    python main.py build-index
    ```
+
+## Tests
+
+The test suite runs without Ollama, model downloads, or a live FAISS index
+(heavy modules are stubbed in `tests/conftest.py`):
+
+```bash
+cd src
+venv/bin/python -m pytest tests/ -v
+```
+
+Tests cover: query-expansion parsing/fallback, FTS5 build/search, RRF fusion
+correctness, hybrid retrieval concurrency, partial backend failure, and the
+full assistant pipeline wiring (MCP decision + prompt + answer).
 
 ## Troubleshooting
 

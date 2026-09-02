@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     FAISS_INDEX_PATH,
     CHUNKS_PATH,
+    FTS_DB_PATH,
     EMBEDDING_MODEL,
     OLLAMA_URL,
     OLLAMA_MODEL,
@@ -21,16 +22,18 @@ model = SentenceTransformer(EMBEDDING_MODEL)
 # Global variables for index and chunks
 index = None
 chunks = []
+_fts_ready = False
 
 
 def _ensure_index_exists():
     """Ensure FAISS index exists, build it if it doesn't."""
-    global index, chunks
+    global index, chunks, _fts_ready
     
     # Resolve paths relative to src directory
     src_dir = Path(__file__).parent.parent
     index_path = src_dir / FAISS_INDEX_PATH
     chunks_path = src_dir / CHUNKS_PATH
+    fts_path = src_dir / FTS_DB_PATH
     
     # Check if index exists
     if index_path.exists() and chunks_path.exists():
@@ -38,6 +41,17 @@ def _ensure_index_exists():
             index = faiss.read_index(str(index_path))
             with open(chunks_path, "rb") as f:
                 chunks = pickle.load(f)
+            # Load (or rebuild if missing) the FTS5 index reusing the same chunks
+            from rag.fts import load_fts, build_fts
+            if load_fts(fts_path):
+                _fts_ready = True
+            else:
+                try:
+                    build_fts(chunks, fts_path)
+                    _fts_ready = True
+                except Exception as e:
+                    print(f"⚠️  Warning: FTS index build failed: {e}")
+                    _fts_ready = False
             return True
         except Exception as e:
             print(f"⚠️  Warning: Error loading existing index: {e}")
@@ -54,6 +68,8 @@ def _ensure_index_exists():
             index = faiss.read_index(str(index_path))
             with open(chunks_path, "rb") as f:
                 chunks = pickle.load(f)
+            from rag.fts import load_fts
+            _fts_ready = load_fts(fts_path)
             print("✅ Index built and loaded successfully")
             return True
         else:
@@ -73,8 +89,8 @@ def _ensure_index_exists():
 _ensure_index_exists()
 
 
-def retrieve(query: str):
-    """Retrieve relevant chunks for a query."""
+def retrieve_faiss(query: str):
+    """Retrieve relevant chunks for a query using FAISS only."""
     # Ensure index exists before retrieving
     if index is None or len(chunks) == 0:
         if not _ensure_index_exists():
@@ -88,6 +104,28 @@ def retrieve(query: str):
 
     scores, ids = index.search(q_emb, TOP_K)
     return [chunks[i] for i in ids[0]]
+
+
+def retrieve(query: str):
+    """Retrieve relevant chunks using hybrid FAISS + FTS search with RRF.
+
+    Falls back to FAISS-only retrieval if the hybrid path fails or returns
+    nothing. This preserves the original behavior as a safety net.
+    """
+    # Ensure index exists before retrieving
+    if index is None or len(chunks) == 0:
+        if not _ensure_index_exists():
+            return []
+
+    try:
+        from rag.hybrid import retrieve_hybrid
+        fused = retrieve_hybrid(query)
+        if fused:
+            return fused
+    except Exception as e:
+        print(f"⚠️  Hybrid retrieval failed, falling back to FAISS: {e}")
+
+    return retrieve_faiss(query)
 
 
 def build_prompt(query, contexts):

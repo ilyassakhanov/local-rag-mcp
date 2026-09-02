@@ -14,6 +14,11 @@ index.faiss
 *.pkl
 chunks.pkl
 
+# SQLite FTS index (hybrid search)
+*.sqlite
+chunks.sqlite
+chunks_test.sqlite
+
 # IDE
 .vscode/
 .idea/
